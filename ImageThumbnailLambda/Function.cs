@@ -4,8 +4,8 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using Amazon.S3.Util;
 using Amazon.SimpleSystemsManagement;
-using System.Drawing;
-using System.Drawing.Imaging;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
 
 
 // Assembly attribute to enable the Lambda function's JSON input to be converted into a .NET class.
@@ -14,9 +14,13 @@ using System.Drawing.Imaging;
 namespace ImageThumbnailLambda;
 
 public class Function
+
 {
+    string TargetBucketParameterName = "/potterywebsitesolution/thumbnailfunction/targetbucket";
+
     IAmazonS3 S3Client { get; set; }
- 
+    String TargetBucket = String.Empty;
+
     /// <summary>
     /// Default constructor. This constructor is used by Lambda to construct the instance. When invoked in a Lambda environment
     /// the AWS credentials will come from the IAM role associated with the function and the AWS region will be set to the
@@ -25,17 +29,28 @@ public class Function
     public Function()
     {
         S3Client = new AmazonS3Client();
-        //var client = new AmazonSimpleSystemsManagementClient();
-        //client.GetParameterAsync(new Amazon.SimpleSystemsManagement.Model.GetParameterRequest { Name = "" });
+    }
+
+    private async Task fetchTargetBucketParameter()
+    {
+        using (var client = new AmazonSimpleSystemsManagementClient())
+        {
+            var response = await client.GetParameterAsync(new Amazon.SimpleSystemsManagement.Model.GetParameterRequest { Name = TargetBucketParameterName });
+            if (response.HttpStatusCode == System.Net.HttpStatusCode.OK)
+            {
+                TargetBucket = response.Parameter.Value;
+            }
+        }
     }
 
     /// <summary>
     /// Constructs an instance with a preconfigured S3 client. This can be used for testing the outside of the Lambda environment.
     /// </summary>
     /// <param name="s3Client"></param>
-    public Function(IAmazonS3 s3Client)
+    public Function(IAmazonS3 s3Client, String targetBucket)
     {
         this.S3Client = s3Client;
+        this.TargetBucket = targetBucket;
     }
     
     /// <summary>
@@ -47,6 +62,13 @@ public class Function
     /// <returns></returns>
     public async Task<string?> FunctionHandler(S3Event evnt, ILambdaContext context)
     {
+
+        if (TargetBucket == String.Empty)
+        {
+            await fetchTargetBucketParameter();
+        }
+        context.Logger.LogInformation($"Target bucket for our lambda is {TargetBucket}");
+
         var s3Event = evnt.Records?[0].S3;
         if(s3Event == null)
         {
@@ -56,32 +78,81 @@ public class Function
         try
         {
             var response = await this.S3Client.GetObjectMetadataAsync(s3Event.Bucket.Name, s3Event.Object.Key);
-            context.Logger.LogInformation($"Content type of object is {response.Headers.ContentType}");
+            string contentType = response.Headers.ContentType;
 
-            var obj = await S3Client.GetObjectAsync(new GetObjectRequest { BucketName = s3Event.Bucket.Name, Key = s3Event.Object.Key });
-            if (obj.HttpStatusCode != System.Net.HttpStatusCode.OK)
-            {
-                context.Logger.LogError($"Not an OK repsone when retrieving {s3Event.Bucket.Name}/{s3Event.Object.Key}");
-                return null;
-            }
+            context.Logger.LogInformation($"Content type of object is {contentType}");
 
-            using (var instr = obj.ResponseStream)
+            if (contentType.StartsWith("image"))
             {
-                if (instr == null)
+                //var req = new GetObjectRequest() { BucketName = s3Event.Bucket.Name, Key = s3Event.Object.Key };
+
+                var obj = await this.S3Client.GetObjectAsync(s3Event.Bucket.Name, s3Event.Object.Key);
+
+                if (obj == null)
                 {
-                    context.Logger.LogError("Null object response");
+                    context.Logger.LogInformation("ok we've got a null from get object async.");
                     return null;
                 }
 
-                Image img = Image.FromStream(instr);
-                Bitmap bm = new Bitmap(img, new Size(64, 64));
-                
-                var imgsave = new PutObjectRequest { BucketName = s3Event.Bucket.Name, Key = s3Event.Object.Key + ".thumb" };
-                img.Save(imgsave.InputStream, ImageFormat.Jpeg);
-                
-                var saveresp = await S3Client.PutObjectAsync(imgsave);
+                context.Logger.LogInformation($"Code is {obj.HttpStatusCode}");
 
+                if (obj.HttpStatusCode != System.Net.HttpStatusCode.OK)
+                {
+                    context.Logger.LogError($"Not an OK repsone when retrieving {s3Event.Bucket.Name}/{s3Event.Object.Key}");
+                    return null;
+                }
+
+                using (var instr = obj.ResponseStream)
+                {
+                    if (instr == null)
+                    {
+                        context.Logger.LogError("Null object response");
+                        return null;
+                    }
+
+
+                    Image img = Image.Load(instr);
+                    Image thumb = img.Clone(x => x.Resize(128, 128));
+
+                    // copy original
+                    MemoryStream ims = new MemoryStream();
+                    img.Save(ims, new SixLabors.ImageSharp.Formats.Jpeg.JpegEncoder());
+                    var imgsave = new PutObjectRequest
+                    {
+                        BucketName = TargetBucket,
+                        Key = s3Event.Object.Key,
+                        InputStream = ims,
+                        ContentType = response.Headers.ContentType
+                    };
+                    var imgsaveresp = await this.S3Client.PutObjectAsync(imgsave);
+
+                    // store thumb
+                    MemoryStream tms = new MemoryStream();
+                    thumb.Save(tms, new SixLabors.ImageSharp.Formats.Jpeg.JpegEncoder());
+                    var thumbsave = new PutObjectRequest
+                    {
+                        BucketName = TargetBucket,
+                        Key = "thumb." + s3Event.Object.Key,
+                        InputStream = tms,
+                        ContentType = response.Headers.ContentType
+                    };
+                    var thumbsaveresp = await this.S3Client.PutObjectAsync(thumbsave);
+
+
+                }
             }
+            else
+            {
+
+                var copyResponse = await S3Client.CopyObjectAsync(new CopyObjectRequest
+                {
+                    SourceBucket = s3Event.Bucket.Name,
+                    SourceKey = s3Event.Object.Key,
+                    DestinationBucket = TargetBucket,
+                    DestinationKey = s3Event.Object.Key
+                });
+                context.Logger.LogInformation($"Copied non-image file {copyResponse.HttpStatusCode}");
+            }            
 
             return response.Headers.ContentType;
         }

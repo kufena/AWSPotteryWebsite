@@ -48,7 +48,41 @@
         "Role": null,
         "Policies": [
           "AWSLambda_FullAccess",
-          "AmazonS3FullAccess"
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "s3:GetObject*",
+                        "s3:PutObject*",
+                        "s3:Copy*",
+                        "s3-object-lambda:*"
+                    ],
+                    "Resource": "*"
+                }
+             ]
+           },
+           {
+             "Version": "2012-10-17",
+             "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "ssm:DescribeParameters"
+                    ],
+                    "Resource": "*"
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "ssm:GetParameters",
+                        "ssm:GetParameter*"
+                    ],
+                    "Resource": "*"
+                }
+            ]
+            }
         ],
         "Events": {
           "NewImagesBucket": {

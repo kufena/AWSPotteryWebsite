@@ -49,7 +49,7 @@ public class FunctionTest
             };
 
             // Invoke the lambda function and confirm the content type was returned.
-            var function = new Function(s3Client);
+            var function = new Function(s3Client, "theTargetBucket");
             var contentType = await function.FunctionHandler(s3Event,new TestLambdaContext());
 
             Assert.Equal("text/plain", contentType);
