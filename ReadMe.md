@@ -19,3 +19,5 @@ A static website holds the tools to upload text and images and create entries, s
 We'll need some kind of authentication for the tools.
 
 I'm not planning on any kind of basket or money taking at the moment.  That can be a future thing.
+
+The domain is thegatehousepottery.com - already aquired.

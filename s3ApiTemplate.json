@@ -1,0 +1,13 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Parameters": {
+  },
+  "Resources": {
+    "S3APIGateway": {
+      "Type": "AWS::ApiGatewayV2::Api",
+      "Properties": {
+        "Name": "S3APIGateway" 
+      } 
+    }
+  } 
+}
